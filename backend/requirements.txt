@@ -5,6 +5,6 @@ python-docx
 pymongo
 python-dotenv
 python-multipart
-google-genai
+google-generativeai
 pydantic-settings
 motor
