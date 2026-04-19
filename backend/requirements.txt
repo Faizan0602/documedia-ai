@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pypdf
+python-docx
+pymongo
+python-dotenv
+python-multipart
+google-genai
+pydantic-settings
+motor
