@@ -1,5 +1,5 @@
+
 import re
-import math
 from typing import Optional
 
 
@@ -14,14 +14,6 @@ class VectorService:
     def __init__(self):
         self.chunks: dict[str, list[DocumentChunk]] = {}
 
-    def get_all_text_chunks(self) -> list[str]:
-        all_text = []
-        for doc_chunks in self.chunks.values():
-            for chunk in doc_chunks:
-                all_text.append(chunk.text)
-        return all_text
-
-    # 🔹 Levenshtein distance (for typo handling)
     def _levenshtein_distance(self, a: str, b: str) -> int:
         if len(a) == 0:
             return len(b)
@@ -63,7 +55,7 @@ class VectorService:
         i = 0
         while i < len(words):
             chunk = " ".join(words[i:i + size])
-            if chunk.strip():  # ✅ guard against empty chunks
+            if chunk.strip():
                 chunks.append(chunk)
             i += size - overlap
 
@@ -101,39 +93,39 @@ class VectorService:
         for chunk in doc_chunks:
             score = 0.0
 
-            # 🔥 Strong phrase match
-            if query.lower() in chunk.text.lower():
-                score += 5
+            
+            if any(q in chunk.text.lower() for q in query.lower().split()):
+                score += 3
 
-            # 🔥 Token + fuzzy match
+            
             for q_token in query_tokens:
                 best_match = 0.0
-
                 for c_token in chunk.tokens:
                     sim = self._get_similarity(q_token, c_token)
                     if sim > best_match:
                         best_match = sim
 
-                if best_match >= 0.75:
+                if best_match >= 0.6:
                     score += best_match * 2
 
             scored_chunks.append((chunk, score))
 
-        # 🔥 Only strong matches
+        
         valid_chunks = [
             (chunk, score)
             for chunk, score in scored_chunks
-            if score >= 2
+            if score >= 0.5
         ]
 
-        valid_chunks.sort(key=lambda x: x[1], reverse=True)
-        valid_chunks = valid_chunks[:top_k]
-
+       
         if not valid_chunks:
-            return []
+            scored_chunks.sort(key=lambda x: x[1], reverse=True)
+            return [chunk.text for chunk, _ in scored_chunks[:top_k]]
 
-        return [chunk.text for chunk, _ in valid_chunks]
+        valid_chunks.sort(key=lambda x: x[1], reverse=True)
+        return [chunk.text for chunk, _ in valid_chunks[:top_k]]
 
 
 # Singleton instance
 vector_service = VectorService()
+
