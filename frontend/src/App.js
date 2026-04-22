@@ -1,3 +1,4 @@
+```javascript
 import React, { useState } from "react";
 import Upload from "./components/Upload";
 import Summary from "./components/Summary";
@@ -6,13 +7,28 @@ import Timestamps from "./components/Timestamps";
 
 function App() {
   const [currentDocId, setCurrentDocId] = useState(null);
-  const [fileType, setFileType] = useState(null); // 'pdf', 'video', etc.
+  const [fileType, setFileType] = useState(null);
 
   const handleUploadSuccess = (response) => {
-    // response is whatever the backend returns.
-    if (response && response.data && response.data.doc_id) {
-      setCurrentDocId(response.data.doc_id);
-      setFileType(response.data.file_type); 
+    console.log("UPLOAD RESPONSE:", response);
+
+    if (response && response.doc_id) {
+      setCurrentDocId(response.doc_id);
+
+      // Infer file type from filename
+      if (response.filename) {
+        const ext = response.filename.split(".").pop().toLowerCase();
+
+        if (["pdf", "txt", "docx"].includes(ext)) {
+          setFileType(ext === "txt" ? "text" : ext);
+        } else if (["mp4", "avi", "mov"].includes(ext)) {
+          setFileType("video");
+        } else if (["mp3", "wav", "m4a"].includes(ext)) {
+          setFileType("audio");
+        } else {
+          setFileType("other");
+        }
+      }
     }
   };
 
@@ -22,17 +38,17 @@ function App() {
       
       <Upload onUploadSuccess={handleUploadSuccess} />
       
-      {/* If it is a Document, show Summary and Chat */}
-      {(fileType === 'pdf' || fileType === 'text' || fileType === 'docx') && (
+      {/* Document → Summary + Chat */}
+      {(fileType === "pdf" || fileType === "text" || fileType === "docx") && currentDocId && (
         <>
-           <Summary docId={currentDocId} />
-           <Chat docId={currentDocId} />
+          <Summary docId={currentDocId} />
+          <Chat docId={currentDocId} />
         </>
       )}
 
-      {/* If it is a Video or Audio, show the Timestamps player instead */}
-      {(fileType === 'video' || fileType === 'audio') && (
-         <Timestamps docId={currentDocId} />
+      {/* Media → Timestamps */}
+      {(fileType === "video" || fileType === "audio") && currentDocId && (
+        <Timestamps docId={currentDocId} />
       )}
       
     </div>
@@ -40,3 +56,4 @@ function App() {
 }
 
 export default App;
+```
