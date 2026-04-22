@@ -1,9 +1,9 @@
-```javascript
+
 import React, { useState } from "react";
 import Upload from "./components/Upload";
 import Summary from "./components/Summary";
 import Chat from "./components/Chat";
-import Timestamps from "./components/Timestamps"; 
+import Timestamps from "./components/Timestamps";
 
 function App() {
   const [currentDocId, setCurrentDocId] = useState(null);
@@ -15,7 +15,6 @@ function App() {
     if (response && response.doc_id) {
       setCurrentDocId(response.doc_id);
 
-      // Infer file type from filename
       if (response.filename) {
         const ext = response.filename.split(".").pop().toLowerCase();
 
@@ -35,25 +34,22 @@ function App() {
   return (
     <div style={{ padding: "40px", maxWidth: "900px", margin: "0 auto" }}>
       <h1>AI Document Q&A</h1>
-      
-      <Upload onUploadSuccess={handleUploadSuccess} />
-      
-      {/* Document → Summary + Chat */}
-      {(fileType === "pdf" || fileType === "text" || fileType === "docx") && currentDocId && (
-        <>
-          <Summary docId={currentDocId} />
-          <Chat docId={currentDocId} />
-        </>
-      )}
 
-      {/* Media → Timestamps */}
-      {(fileType === "video" || fileType === "audio") && currentDocId && (
-        <Timestamps docId={currentDocId} />
-      )}
-      
+      <Upload onUploadSuccess={handleUploadSuccess} />
+
+      {(fileType === "pdf" || fileType === "text" || fileType === "docx") &&
+        currentDocId && (
+          <>
+            <Summary docId={currentDocId} />
+            <Chat docId={currentDocId} />
+          </>
+        )}
+
+      {(fileType === "video" || fileType === "audio") &&
+        currentDocId && <Timestamps docId={currentDocId} />}
     </div>
   );
 }
 
 export default App;
-```
+
