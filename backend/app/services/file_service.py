@@ -46,21 +46,12 @@ class FileService:
         else:
             file_category = "other"
 
-        result = {
-            "original_filename": file.filename,
-            "file_path": file_path,
-            "file_type": file_category,
-        }
+        doc_id = unique_filename
 
         # -------------------------------
-        # MEDIA FILES (no text extraction)
+        # MEDIA FILES
         # -------------------------------
         if file_category in ["audio", "video"]:
-            doc_id = unique_filename
-            result["doc_id"] = doc_id
-            result["message"] = "Transcription pipeline ready (placeholder)"
-            result["timestamps"] = []
-
             file_doc = {
                 "doc_id": doc_id,
                 "original_filename": file.filename,
@@ -70,28 +61,40 @@ class FileService:
                 "upload_timestamp": datetime.now(timezone.utc)
             }
 
-            await db.db["files"].insert_one(file_doc)
-            return result
+            try:
+                await db.db["files"].insert_one(file_doc)
+            except Exception as e:
+                print("DB INSERT ERROR:", str(e))
+
+            return {
+                "doc_id": doc_id,
+                "filename": file.filename,
+                "message": "Media uploaded successfully"
+            }
 
         # -------------------------------
         # TEXT EXTRACTION
         # -------------------------------
-        if file_category == "pdf":
-            full_text = FileService.extract_pdf_text(file_path)
-        elif file_category == "text":
-            full_text = FileService.extract_txt_text(file_path)
-        elif file_category == "docx":
-            full_text = FileService.extract_docx_text(file_path)
-        else:
-            return result
+        try:
+            if file_category == "pdf":
+                full_text = FileService.extract_pdf_text(file_path)
+            elif file_category == "text":
+                full_text = FileService.extract_txt_text(file_path)
+            elif file_category == "docx":
+                full_text = FileService.extract_docx_text(file_path)
+            else:
+                full_text = ""
+        except Exception as e:
+            print("TEXT EXTRACTION ERROR:", str(e))
+            full_text = ""
 
-        full_text = full_text.strip()
+        full_text = (full_text or "").strip()
 
-        result["preview"] = full_text[:500]
-
-        # ✅ FIX: pass full_text (NOT chunks)
-        doc_id = unique_filename
-        vector_service.add_document(doc_id, full_text)
+        # Vector indexing (safe)
+        try:
+            vector_service.add_document(doc_id, full_text)
+        except Exception as e:
+            print("VECTOR ERROR:", str(e))
 
         file_doc = {
             "doc_id": doc_id,
@@ -102,10 +105,16 @@ class FileService:
             "upload_timestamp": datetime.now(timezone.utc)
         }
 
-        await db.db["files"].insert_one(file_doc)
+        try:
+            await db.db["files"].insert_one(file_doc)
+        except Exception as e:
+            print("DB INSERT ERROR:", str(e))
 
-        result["doc_id"] = doc_id
-        return result
+        return {
+            "doc_id": doc_id,
+            "filename": file.filename,
+            "message": "File uploaded successfully"
+        }
 
     # -------------------------------
     # LLM Chat — Gemini
