@@ -16,8 +16,170 @@ SUMMARY_QUERY = (
     "degree college university experience internship work projects achievements"
 )
 MAX_SUMMARY_CONTEXT_CHARS = 7000
-MAX_CHAT_CONTEXT_CHARS = 5000
-MAX_CONTEXT_LINES = 90
+MAX_SUMMARY_LINES = 90
+MAX_CHAT_CONTEXT_CHARS = 2600
+MAX_CHAT_LINES = 24
+
+CHAT_INTENTS = {
+    "projects": {
+        "project",
+        "projects",
+        "application",
+        "applications",
+        "app",
+        "apps",
+        "system",
+        "systems",
+        "simulator",
+        "visualizer",
+        "portfolio",
+        "developed",
+        "built",
+        "implemented",
+    },
+    "skills": {
+        "skill",
+        "skills",
+        "technical",
+        "technology",
+        "technologies",
+        "tool",
+        "tools",
+        "language",
+        "languages",
+        "framework",
+        "frameworks",
+        "python",
+        "java",
+        "javascript",
+        "react",
+        "node",
+        "sql",
+        "mongodb",
+    },
+    "education": {
+        "education",
+        "academic",
+        "degree",
+        "college",
+        "university",
+        "school",
+        "cgpa",
+        "gpa",
+        "b.tech",
+        "bachelor",
+        "master",
+    },
+    "experience": {
+        "experience",
+        "work",
+        "professional",
+        "intern",
+        "internship",
+        "job",
+        "role",
+        "company",
+        "employment",
+    },
+    "certifications": {
+        "certification",
+        "certifications",
+        "certificate",
+        "certificates",
+        "course",
+        "courses",
+    },
+    "achievements": {
+        "achievement",
+        "achievements",
+        "award",
+        "awards",
+        "honor",
+        "honors",
+    },
+}
+
+STRICT_CHAT_TERMS = {
+    "projects": {
+        "project",
+        "projects",
+        "application",
+        "applications",
+        "app",
+        "apps",
+        "system",
+        "systems",
+        "simulator",
+        "visualizer",
+        "portfolio",
+        "platform",
+        "website",
+        "tracker",
+        "management",
+    },
+}
+
+SECTION_TO_INTENT = {
+    "technical skills": "skills",
+    "skills": "skills",
+    "tools": "skills",
+    "technologies": "skills",
+    "education": "education",
+    "academic": "education",
+    "academics": "education",
+    "academic details": "education",
+    "experience": "experience",
+    "work experience": "experience",
+    "professional experience": "experience",
+    "internship": "experience",
+    "internships": "experience",
+    "employment": "experience",
+    "projects": "projects",
+    "project": "projects",
+    "personal projects": "projects",
+    "academic projects": "projects",
+    "certifications": "certifications",
+    "certification": "certifications",
+    "certificates": "certifications",
+    "achievements": "achievements",
+    "awards": "achievements",
+}
+
+STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "give",
+    "in",
+    "include",
+    "including",
+    "is",
+    "it",
+    "list",
+    "me",
+    "mentioned",
+    "of",
+    "on",
+    "or",
+    "show",
+    "tell",
+    "that",
+    "the",
+    "this",
+    "to",
+    "was",
+    "were",
+    "what",
+    "which",
+    "with",
+}
 
 
 class AIService:
@@ -31,12 +193,7 @@ class AIService:
             self.model = None
 
     def generate_summary(self, doc_id: str) -> str:
-        context = self._build_context(
-            doc_id=doc_id,
-            query=SUMMARY_QUERY,
-            top_k=10,
-            max_chars=MAX_SUMMARY_CONTEXT_CHARS,
-        )
+        context = self._build_summary_context(doc_id)
 
         if not context:
             return "No relevant information found in this document."
@@ -49,28 +206,28 @@ class AIService:
         if not clean_question:
             return "Please enter a question."
 
-        context = self._build_context(
-            doc_id=doc_id,
-            query=clean_question,
-            top_k=8,
-            max_chars=MAX_CHAT_CONTEXT_CHARS,
-        )
+        intent = self._detect_chat_intent(clean_question)
 
-        if not context:
-            return "No relevant information found in this document."
+        if self._is_summary_question(clean_question) and not intent:
+            context = self._build_summary_context(doc_id)
+            if not context:
+                return "No relevant information found in this document."
 
-        if self._is_summary_question(clean_question):
             prompt = self._summary_prompt(context)
             fallback = self._fallback_summary(context)
-        else:
-            prompt = self._chat_prompt(clean_question, context)
-            fallback = self._fallback_answer(context)
+            return self._generate(prompt, fallback)
 
+        context = self._build_chat_context(doc_id, clean_question, intent)
+        if not context:
+            return "* Not found in the document."
+
+        prompt = self._chat_prompt(clean_question, context, intent)
+        fallback = self._fallback_answer(context)
         return self._generate(prompt, fallback)
 
-    def _generate(self, prompt: str, fallback_context: str) -> str:
+    def _generate(self, prompt: str, fallback_text: str) -> str:
         if not self.model:
-            return fallback_context
+            return fallback_text
 
         try:
             response = self.model.generate_content(
@@ -78,15 +235,24 @@ class AIService:
                 generation_config={
                     "temperature": 0.1,
                     "top_p": 0.8,
-                    "max_output_tokens": 900,
+                    "max_output_tokens": 700,
                 },
             )
             text = getattr(response, "text", "") or ""
             text = text.strip()
-            return text if text else fallback_context
+            return text if text else fallback_text
         except Exception as e:
             print("Gemini error:", str(e))
-            return fallback_context
+            return fallback_text
+
+    def _build_summary_context(self, doc_id: str) -> str:
+        return self._build_context(
+            doc_id=doc_id,
+            query=SUMMARY_QUERY,
+            top_k=10,
+            max_chars=MAX_SUMMARY_CONTEXT_CHARS,
+            max_lines=MAX_SUMMARY_LINES,
+        )
 
     def _build_context(
         self,
@@ -94,30 +260,29 @@ class AIService:
         query: str,
         top_k: int,
         max_chars: int,
+        max_lines: int,
     ) -> str:
         chunks = vector_service.search(doc_id, query, top_k=top_k)
-
-        if not chunks and query != SUMMARY_QUERY:
-            chunks = vector_service.search(doc_id, SUMMARY_QUERY, top_k=top_k)
-
         unique_chunks = self._unique_chunks(chunks)
         meaningful_lines = self._meaningful_unique_lines(unique_chunks)
+        return self._join_limited_lines(meaningful_lines, max_chars, max_lines)
 
-        selected_lines: list[str] = []
-        total_chars = 0
+    def _build_chat_context(self, doc_id: str, question: str, intent: str) -> str:
+        search_query = question
+        if intent:
+            search_query = f"{question} {' '.join(sorted(CHAT_INTENTS[intent]))}"
 
-        for line in meaningful_lines:
-            next_size = len(line) + 1
-            if selected_lines and total_chars + next_size > max_chars:
-                break
+        chunks = vector_service.search(doc_id, search_query, top_k=4)
+        unique_chunks = self._unique_chunks(chunks)
+        lines = self._relevant_chat_lines(unique_chunks, question, intent)
 
-            selected_lines.append(line)
-            total_chars += next_size
+        if not lines and intent:
+            fallback_query = " ".join(sorted(CHAT_INTENTS[intent]))
+            chunks = vector_service.search(doc_id, fallback_query, top_k=4)
+            unique_chunks = self._unique_chunks(chunks)
+            lines = self._relevant_chat_lines(unique_chunks, question, intent)
 
-            if len(selected_lines) >= MAX_CONTEXT_LINES:
-                break
-
-        return "\n".join(selected_lines).strip()
+        return self._join_limited_lines(lines, MAX_CHAT_CONTEXT_CHARS, MAX_CHAT_LINES)
 
     def _unique_chunks(self, chunks: Iterable[str]) -> list[str]:
         selected: list[str] = []
@@ -142,31 +307,96 @@ class AIService:
 
     def _meaningful_unique_lines(self, chunks: Iterable[str]) -> list[str]:
         lines: list[str] = []
-        fingerprints: set[str] = set()
+        seen: set[str] = set()
 
         for chunk in chunks:
             for raw_line in self._split_lines(chunk):
-                line = self._clean_line(raw_line)
-                if not self._is_meaningful_line(line):
-                    continue
-
-                fingerprint = self._fingerprint(line)
-                if not fingerprint or fingerprint in fingerprints:
-                    continue
-
-                if self._overlaps_existing_line(line, lines):
-                    continue
-
-                fingerprints.add(fingerprint)
-                lines.append(line)
+                self._append_unique_line(lines, seen, raw_line)
 
         return lines
+
+    def _relevant_chat_lines(
+        self,
+        chunks: Iterable[str],
+        question: str,
+        intent: str,
+    ) -> list[str]:
+        lines: list[str] = []
+        seen: set[str] = set()
+        query_tokens = self._query_tokens(question)
+
+        for chunk in chunks:
+            sections = self._split_sections(chunk)
+
+            if intent:
+                matched_section = False
+                for section_intent, section_text in sections:
+                    if section_intent != intent:
+                        continue
+
+                    matched_section = True
+                    for raw_line in self._split_lines(section_text):
+                        self._append_unique_line(lines, seen, raw_line)
+
+                if matched_section:
+                    continue
+
+            for section_intent, section_text in sections:
+                if intent and section_intent and section_intent != intent:
+                    continue
+
+                for raw_line in self._split_lines(section_text):
+                    line = self._clean_line(raw_line)
+                    if not self._is_relevant_chat_line(line, query_tokens, intent):
+                        continue
+
+                    self._append_unique_line(lines, seen, line)
+
+        return lines
+
+    def _split_sections(self, text: str) -> list[tuple[str, str]]:
+        text = self._normalize_text(text)
+        heading_names = sorted(SECTION_TO_INTENT.keys(), key=len, reverse=True)
+        heading_pattern = "|".join(re.escape(name) for name in heading_names)
+        marked = re.sub(
+            rf"\b({heading_pattern})\b\s*:?",
+            r"\n[[SECTION:\1]]\n",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        sections: list[tuple[str, str]] = []
+        current_intent = ""
+        current_lines: list[str] = []
+
+        for part in re.split(r"\n+", marked):
+            part = part.strip()
+            if not part:
+                continue
+
+            marker = re.fullmatch(r"\[\[SECTION:(.+?)\]\]", part, flags=re.IGNORECASE)
+            if marker:
+                if current_lines:
+                    sections.append((current_intent, "\n".join(current_lines)))
+                    current_lines = []
+
+                heading = marker.group(1).lower().strip()
+                current_intent = SECTION_TO_INTENT.get(heading, "")
+                continue
+
+            current_lines.append(part)
+
+        if current_lines:
+            sections.append((current_intent, "\n".join(current_lines)))
+
+        return sections or [("", text)]
 
     def _split_lines(self, text: str) -> list[str]:
         text = self._normalize_text(text)
         text = re.sub(
-            r"\b(Skills|Technical Skills|Education|Experience|Work Experience|"
-            r"Professional Experience|Internship|Internships|Projects|"
+            r"\b(Skills|Technical Skills|Education|Academic Details|Experience|"
+            r"Work Experience|Professional Experience|Internship|Internships|"
+            r"Projects|Project|Personal Projects|Academic Projects|"
             r"Certifications|Achievements|Responsibilities)\b\s*:?",
             r"\n\1:\n",
             text,
@@ -174,12 +404,12 @@ class AIService:
         )
 
         candidates: list[str] = []
-        for part in re.split(r"\n+", text):
+        for part in re.split(r"\n+|[;|]", text):
             part = part.strip()
             if not part:
                 continue
 
-            if len(part) > 280:
+            if len(part) > 260:
                 candidates.extend(
                     item.strip()
                     for item in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])", part)
@@ -189,6 +419,104 @@ class AIService:
                 candidates.append(part)
 
         return candidates
+
+    def _append_unique_line(self, lines: list[str], seen: set[str], raw_line: str) -> None:
+        line = self._clean_line(raw_line)
+        if not self._is_meaningful_line(line):
+            return
+
+        fingerprint = self._fingerprint(line)
+        if not fingerprint or fingerprint in seen:
+            return
+
+        if self._overlaps_existing_line(line, lines):
+            return
+
+        seen.add(fingerprint)
+        lines.append(line)
+
+    def _is_relevant_chat_line(
+        self,
+        line: str,
+        query_tokens: set[str],
+        intent: str,
+    ) -> bool:
+        if not self._is_meaningful_line(line):
+            return False
+
+        lowered = line.lower().rstrip(":")
+        if lowered in SECTION_TO_INTENT:
+            return False
+
+        line_tokens = self._query_tokens(line)
+
+        if intent:
+            intent_tokens = STRICT_CHAT_TERMS.get(intent, CHAT_INTENTS[intent])
+            if line_tokens.intersection(intent_tokens):
+                return True
+
+            if query_tokens and line_tokens.intersection(query_tokens):
+                return True
+
+            return False
+
+        return bool(query_tokens and line_tokens.intersection(query_tokens))
+
+    def _detect_chat_intent(self, question: str) -> str:
+        tokens = self._query_tokens(question)
+
+        for intent in (
+            "projects",
+            "skills",
+            "education",
+            "experience",
+            "certifications",
+            "achievements",
+        ):
+            if tokens.intersection(CHAT_INTENTS[intent]):
+                return intent
+
+        return ""
+
+    def _query_tokens(self, text: str) -> set[str]:
+        tokens = set(re.findall(r"[a-z0-9+#.]+", text.lower()))
+        tokens = {
+            token
+            for token in tokens
+            if token not in STOPWORDS and (len(token) > 1 or token in {"c", "r"})
+        }
+
+        expanded = set(tokens)
+        for token in tokens:
+            singular = token[:-1] if token.endswith("s") else token
+            plural = f"{token}s"
+
+            for key in {token, singular, plural}:
+                expanded.update(CHAT_INTENTS.get(key, set()))
+
+        return expanded
+
+    def _join_limited_lines(
+        self,
+        lines: Iterable[str],
+        max_chars: int,
+        max_lines: int,
+    ) -> str:
+        selected_lines: list[str] = []
+        total_chars = 0
+
+        for line in lines:
+            next_size = len(line) + 1
+            if selected_lines and total_chars + next_size > max_chars:
+                break
+
+            selected_lines.append(line)
+            total_chars += next_size
+
+            if len(selected_lines) >= max_lines:
+                break
+
+        return "\n".join(selected_lines).strip()
 
     def _normalize_text(self, text: str) -> str:
         text = str(text or "")
@@ -232,10 +560,7 @@ class AIService:
         if re.fullmatch(r"[\d\s()+-]{8,}", lowered):
             return False
 
-        if signal_count < 2:
-            return False
-
-        return True
+        return signal_count >= 2
 
     def _fingerprint(self, text: str) -> str:
         text = text.lower()
@@ -263,7 +588,6 @@ class AIService:
 
         for existing in existing_lines:
             existing_fp = self._fingerprint(existing)
-
             shorter = min(len(line_fp), len(existing_fp))
 
             if shorter >= 30 and (line_fp in existing_fp or existing_fp in line_fp):
@@ -276,16 +600,7 @@ class AIService:
 
     def _is_summary_question(self, question: str) -> bool:
         lowered = question.lower()
-        summary_terms = {
-            "summary",
-            "summarize",
-            "profile",
-            "overview",
-            "resume",
-            "skills",
-            "education",
-            "experience",
-        }
+        summary_terms = {"summary", "summarize", "overview"}
         return any(term in lowered for term in summary_terms)
 
     def _summary_prompt(self, context: str) -> str:
@@ -316,24 +631,30 @@ Context:
 {context}
 """.strip()
 
-    def _chat_prompt(self, question: str, context: str) -> str:
+    def _chat_prompt(self, question: str, context: str, intent: str) -> str:
+        topic = intent.title() if intent else "Question"
+
         return f"""
 You are a document Q&A assistant.
 
-Use only the Context to answer the Question.
+Answer only the Question using only the Relevant Context.
+
+Requested topic: {topic}
 
 Rules:
+- Include only facts directly related to the Requested topic.
+- Exclude skills, education, experience, certifications, achievements, and other sections unless the Question asks for them.
 - Do not copy long phrases or full sentences from the Context.
 - Do not repeat facts.
 - Do not include raw context.
-- Use concise "*" bullet points.
-- If the answer is not in the Context, say "* Not found in the document."
+- Use concise "*" bullet points only.
+- If the answer is not in the Relevant Context, return exactly "* Not found in the document."
 - Return only the answer.
 
 Question:
 {question}
 
-Context:
+Relevant Context:
 {context}
 
 Answer:
@@ -360,6 +681,9 @@ Answer:
                 continue
             if "experience" in lowered or "internship" in lowered:
                 current_section = "Experience"
+                continue
+            if lowered in SECTION_TO_INTENT:
+                current_section = ""
                 continue
 
             section = current_section or self._classify_line(line)
@@ -402,53 +726,13 @@ Answer:
         return "\n".join(f"* {bullet}" for bullet in bullets)
 
     def _classify_line(self, line: str) -> str:
-        lowered = line.lower()
+        tokens = self._query_tokens(line)
 
-        skill_terms = {
-            "python",
-            "java",
-            "javascript",
-            "typescript",
-            "react",
-            "node",
-            "fastapi",
-            "sql",
-            "mongodb",
-            "api",
-            "html",
-            "css",
-            "git",
-            "docker",
-            "testing",
-        }
-        education_terms = {
-            "b.tech",
-            "bachelor",
-            "master",
-            "degree",
-            "university",
-            "college",
-            "school",
-            "cgpa",
-            "gpa",
-        }
-        experience_terms = {
-            "intern",
-            "developer",
-            "engineer",
-            "experience",
-            "worked",
-            "built",
-            "developed",
-            "project",
-            "implemented",
-        }
-
-        if any(term in lowered for term in education_terms):
+        if tokens.intersection(CHAT_INTENTS["education"]):
             return "Education"
-        if any(term in lowered for term in experience_terms):
+        if tokens.intersection(CHAT_INTENTS["experience"]):
             return "Experience"
-        if any(term in lowered for term in skill_terms):
+        if tokens.intersection(CHAT_INTENTS["skills"]):
             return "Skills"
 
         return ""

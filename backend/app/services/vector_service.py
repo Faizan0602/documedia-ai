@@ -1,6 +1,124 @@
-
 import re
+from difflib import SequenceMatcher
 from typing import Optional
+
+
+STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "give",
+    "in",
+    "include",
+    "including",
+    "is",
+    "it",
+    "list",
+    "me",
+    "mentioned",
+    "of",
+    "on",
+    "or",
+    "show",
+    "tell",
+    "that",
+    "the",
+    "this",
+    "to",
+    "was",
+    "were",
+    "what",
+    "which",
+    "with",
+}
+
+QUERY_ALIASES = {
+    "project": {
+        "project",
+        "projects",
+        "application",
+        "applications",
+        "app",
+        "apps",
+        "system",
+        "systems",
+        "simulator",
+        "visualizer",
+        "portfolio",
+        "developed",
+        "built",
+        "implemented",
+    },
+    "projects": {
+        "project",
+        "projects",
+        "application",
+        "applications",
+        "app",
+        "apps",
+        "system",
+        "systems",
+        "simulator",
+        "visualizer",
+        "portfolio",
+        "developed",
+        "built",
+        "implemented",
+    },
+    "skill": {
+        "skill",
+        "skills",
+        "technical",
+        "technology",
+        "technologies",
+        "tool",
+        "tools",
+        "language",
+        "languages",
+        "framework",
+        "frameworks",
+    },
+    "skills": {
+        "skill",
+        "skills",
+        "technical",
+        "technology",
+        "technologies",
+        "tool",
+        "tools",
+        "language",
+        "languages",
+        "framework",
+        "frameworks",
+    },
+    "education": {
+        "education",
+        "degree",
+        "college",
+        "university",
+        "school",
+        "academic",
+        "cgpa",
+        "gpa",
+    },
+    "experience": {
+        "experience",
+        "work",
+        "intern",
+        "internship",
+        "job",
+        "role",
+        "company",
+        "professional",
+    },
+}
 
 
 class DocumentChunk:
@@ -14,52 +132,124 @@ class VectorService:
     def __init__(self):
         self.chunks: dict[str, list[DocumentChunk]] = {}
 
-    def _levenshtein_distance(self, a: str, b: str) -> int:
-        if len(a) == 0:
-            return len(b)
-        if len(b) == 0:
-            return len(a)
-
-        matrix = [[0] * (len(a) + 1) for _ in range(len(b) + 1)]
-
-        for i in range(len(a) + 1):
-            matrix[0][i] = i
-        for j in range(len(b) + 1):
-            matrix[j][0] = j
-
-        for j in range(1, len(b) + 1):
-            for i in range(1, len(a) + 1):
-                indicator = 0 if a[i - 1] == b[j - 1] else 1
-                matrix[j][i] = min(
-                    matrix[j][i - 1] + 1,
-                    matrix[j - 1][i] + 1,
-                    matrix[j - 1][i - 1] + indicator
-                )
-
-        return matrix[len(b)][len(a)]
-
-    def _get_similarity(self, a: str, b: str) -> float:
-        dist = self._levenshtein_distance(a, b)
-        max_len = max(len(a), len(b))
-        return 1.0 if max_len == 0 else 1 - dist / max_len
+    def _normalize_text(self, text: str) -> str:
+        text = str(text or "")
+        text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
+        text = re.sub(r"[ ]{2,}", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
 
     def _tokenize(self, text: str) -> list[str]:
-        text = text.lower()
-        text = re.sub(r'[^\w\s]', '', text)
-        return [word for word in text.split() if len(word) > 2]
+        tokens = re.findall(r"[a-z0-9+#.]+", text.lower())
+        return [
+            token
+            for token in tokens
+            if token not in STOPWORDS and (len(token) > 1 or token in {"c", "r"})
+        ]
 
-    def _chunk_text(self, text: str, size: int = 150, overlap: int = 30) -> list[str]:
-        words = text.split()
+    def _expand_query_tokens(self, query: str) -> list[str]:
+        tokens = self._tokenize(query)
+        expanded = set(tokens)
+
+        for token in tokens:
+            singular = token[:-1] if token.endswith("s") else token
+            plural = f"{token}s"
+
+            for key in {token, singular, plural}:
+                expanded.update(QUERY_ALIASES.get(key, set()))
+
+        return list(expanded)
+
+    def _chunk_text(self, text: str, size: int = 120, overlap: int = 12) -> list[str]:
+        lines = [
+            re.sub(r"\s+", " ", line).strip()
+            for line in self._normalize_text(text).splitlines()
+            if line.strip()
+        ]
+
+        if not lines:
+            words = self._normalize_text(text).split()
+            return [
+                " ".join(words[index:index + size])
+                for index in range(0, len(words), max(size - overlap, 1))
+                if words[index:index + size]
+            ]
+
         chunks = []
+        current_lines = []
+        current_words = []
 
-        i = 0
-        while i < len(words):
-            chunk = " ".join(words[i:i + size])
-            if chunk.strip():
-                chunks.append(chunk)
-            i += size - overlap
+        for line in lines:
+            words = line.split()
 
-        return chunks
+            if current_lines and len(current_words) + len(words) > size:
+                chunks.append("\n".join(current_lines))
+                overlap_words = current_words[-overlap:] if overlap else []
+                current_lines = [" ".join(overlap_words)] if overlap_words else []
+                current_words = overlap_words[:]
+
+            current_lines.append(line)
+            current_words.extend(words)
+
+        if current_lines:
+            chunks.append("\n".join(current_lines))
+
+        return [chunk for chunk in chunks if chunk.strip()]
+
+    def _fingerprint(self, text: str) -> str:
+        text = text.lower()
+        text = re.sub(r"[^a-z0-9+#.]+", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _is_duplicate_chunk(self, text: str, existing: list[str]) -> bool:
+        text_fp = self._fingerprint(text)
+
+        for item in existing:
+            item_fp = self._fingerprint(item)
+            shorter = min(len(text_fp), len(item_fp))
+
+            if shorter >= 40 and (text_fp in item_fp or item_fp in text_fp):
+                return True
+
+            if shorter >= 90 and SequenceMatcher(None, text_fp, item_fp).ratio() >= 0.9:
+                return True
+
+        return False
+
+    def _score_chunk(self, chunk: DocumentChunk, query_tokens: list[str]) -> float:
+        if not query_tokens:
+            return 0.0
+
+        chunk_text = chunk.text.lower()
+        chunk_tokens = set(chunk.tokens)
+        query_set = set(query_tokens)
+        exact_matches = chunk_tokens.intersection(query_set)
+
+        score = len(exact_matches) * 4.0
+
+        for token in query_set:
+            if len(token) >= 4 and re.search(rf"\b{re.escape(token)}\b", chunk_text):
+                score += 2.0
+
+        important_tokens = [token for token in query_set if len(token) >= 5]
+        for query_token in important_tokens:
+            if query_token in chunk_tokens:
+                continue
+
+            best_match = 0.0
+            for chunk_token in chunk_tokens:
+                if abs(len(query_token) - len(chunk_token)) > 3:
+                    continue
+
+                similarity = SequenceMatcher(None, query_token, chunk_token).ratio()
+                if similarity > best_match:
+                    best_match = similarity
+
+            if best_match >= 0.86:
+                score += best_match
+
+        density = score / max(len(chunk.tokens), 1)
+        return score + density
 
     def add_document(self, doc_id: str, text: str):
         raw_chunks = self._chunk_text(text)
@@ -68,7 +258,7 @@ class VectorService:
             DocumentChunk(
                 id=f"{doc_id}_chunk_{index}",
                 text=chunk_text,
-                tokens=self._tokenize(chunk_text)
+                tokens=self._tokenize(chunk_text),
             )
             for index, chunk_text in enumerate(raw_chunks)
         ]
@@ -84,48 +274,37 @@ class VectorService:
         if not doc_chunks:
             return []
 
-        query_tokens = self._tokenize(query)
+        query_tokens = self._expand_query_tokens(query)
         if not query_tokens:
             return []
 
-        scored_chunks = []
-
-        for chunk in doc_chunks:
-            score = 0.0
-
-            
-            if any(q in chunk.text.lower() for q in query.lower().split()):
-                score += 3
-
-            
-            for q_token in query_tokens:
-                best_match = 0.0
-                for c_token in chunk.tokens:
-                    sim = self._get_similarity(q_token, c_token)
-                    if sim > best_match:
-                        best_match = sim
-
-                if best_match >= 0.6:
-                    score += best_match * 2
-
-            scored_chunks.append((chunk, score))
-
-        
-        valid_chunks = [
+        scored_chunks = [
+            (chunk, self._score_chunk(chunk, query_tokens))
+            for chunk in doc_chunks
+        ]
+        scored_chunks = [
             (chunk, score)
             for chunk, score in scored_chunks
-            if score >= 0.5
+            if score >= 2.0
         ]
 
-       
-        if not valid_chunks:
-            scored_chunks.sort(key=lambda x: x[1], reverse=True)
-            return [chunk.text for chunk, _ in scored_chunks[:top_k]]
+        scored_chunks.sort(key=lambda item: item[1], reverse=True)
 
-        valid_chunks.sort(key=lambda x: x[1], reverse=True)
-        return [chunk.text for chunk, _ in valid_chunks[:top_k]]
+        results = []
+        for chunk, _ in scored_chunks:
+            text = self._normalize_text(chunk.text)
+            if not text:
+                continue
+
+            if self._is_duplicate_chunk(text, results):
+                continue
+
+            results.append(text)
+
+            if len(results) >= top_k:
+                break
+
+        return results
 
 
-# Singleton instance
 vector_service = VectorService()
-
