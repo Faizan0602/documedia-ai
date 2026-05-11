@@ -38,10 +38,6 @@ MongoDB
 
 DevOps & Deployment
 
-Docker
-Vercel (Frontend)
-Render (Backend)
-System Architecture
 Frontend (React.js)
         ↓
  FastAPI Backend
